@@ -1,0 +1,3 @@
+[submodule "pi-home-utils"]
+	path = pi-home-utils
+	url = https://github.com/msmouni/pi-home-utils.git
