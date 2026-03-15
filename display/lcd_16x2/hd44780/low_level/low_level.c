@@ -16,14 +16,14 @@
  *   P7 → D7
  */
 
-#include "lcd_16x2/low_level/low_level.h"
-#include <stdio.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdbool.h>
+#include "low_level/low_level.h"
 #include "i2c.h"
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 /* LCD command definitions (from HD44780U datasheet, Table 6) */
 #define LCD_CLEAR_DISPLAY 0x01
@@ -41,7 +41,7 @@
 #define LCD_ENTRY_SHIFT_INC 0x01
 #define LCD_ENTRY_SHIFT_DEC 0x00
 
-/* Flags for lcd_16x2 on/off control */
+/* Flags for hd44780 on/off control */
 #define LCD_DISPLAY_ON 0x04
 #define LCD_DISPLAY_OFF 0x00
 #define LCD_CURSOR_ON 0x02
@@ -49,7 +49,7 @@
 #define LCD_BLINK_ON 0x01
 #define LCD_BLINK_OFF 0x00
 
-/* Flags for lcd_16x2/cursor shift */
+/* Flags for hd44780/cursor shift */
 #define LCD_DISPLAY_MOVE 0x08
 #define LCD_CURSOR_MOVE 0x00
 #define LCD_MOVE_RIGHT 0x04
@@ -74,96 +74,99 @@
 #define ENABLE_PULSE_US 500
 #define COMMAND_DELAY_US 2000
 
-typedef struct
-{
+struct hd44780_ll {
     struct I2cBus *i2c_bus;
     uint8_t i2c_addr;
-} lcd_16x2_ll_ll_t;
-
-static lcd_16x2_ll_ll_t lcd_16x2_ll_ll;
+};
 
 /* Toggle EN (Enable) to latch 4-bit data */
-static void lcd_16x2_ll_toggle_enable(uint8_t data)
+static void hd44780_ll_toggle_enable(struct hd44780_ll *self, uint8_t data)
 {
-    i2c_write(lcd_16x2_ll_ll.i2c_bus, lcd_16x2_ll_ll.i2c_addr, &data, sizeof(data));
+    i2c_write(self->i2c_bus, self->i2c_addr, &data, sizeof(data));
 
     data |= PIN_EN;
-    i2c_write(lcd_16x2_ll_ll.i2c_bus, lcd_16x2_ll_ll.i2c_addr, &data, sizeof(data));
+    i2c_write(self->i2c_bus, self->i2c_addr, &data, sizeof(data));
     usleep(ENABLE_PULSE_US);
 
     data &= ~PIN_EN;
-    i2c_write(lcd_16x2_ll_ll.i2c_bus, lcd_16x2_ll_ll.i2c_addr, &data, sizeof(data));
+    i2c_write(self->i2c_bus, self->i2c_addr, &data, sizeof(data));
     usleep(ENABLE_PULSE_US);
 }
 
 /* Send 4 bits (nibble) to LCD */
-static void lcd_16x2_ll_write_nibble(uint8_t nibble, uint8_t mode)
+static void hd44780_ll_write_nibble(struct hd44780_ll *self, uint8_t nibble, uint8_t mode)
 {
     /* Combine 4 data bits (D4–D7) with control bits */
     uint8_t data = (nibble & 0xF0) | mode | BACKLIGHT;
-    i2c_write(lcd_16x2_ll_ll.i2c_bus, lcd_16x2_ll_ll.i2c_addr, &data, sizeof(data));
-    lcd_16x2_ll_toggle_enable(data);
+    i2c_write(self->i2c_bus, self->i2c_addr, &data, sizeof(data));
+    hd44780_ll_toggle_enable(self, data);
 }
 
 /* Send full byte (split into two nibbles) */
-static void lcd_16x2_ll_write_byte(uint8_t value, uint8_t mode)
+static void hd44780_ll_write_byte(struct hd44780_ll *self, uint8_t value, uint8_t mode)
 {
     /* High nibble first */
-    lcd_16x2_ll_write_nibble(value & 0xF0, mode);
+    hd44780_ll_write_nibble(self, value & 0xF0, mode);
     /* Then low nibble */
-    lcd_16x2_ll_write_nibble((value << 4) & 0xF0, mode);
+    hd44780_ll_write_nibble(self, (value << 4) & 0xF0, mode);
     usleep(COMMAND_DELAY_US);
 }
 
 /* LCD command */
-static void lcd_16x2_ll_command(uint8_t cmd)
+static void hd44780_ll_command(struct hd44780_ll *self, uint8_t cmd)
 {
-    lcd_16x2_ll_write_byte(cmd, 0x00);
+    hd44780_ll_write_byte(self, cmd, 0x00);
 }
 
 /* Initialize LCD in 4-bit mode (datasheet Figure 24) */
-void lcd_16x2_ll_init(struct I2cBus *i2c_bus, uint8_t i2c_addr)
+struct hd44780_ll *hd44780_ll_create(struct I2cBus *i2c_bus, uint8_t i2c_addr)
 {
-    lcd_16x2_ll_ll.i2c_bus = i2c_bus;
-    lcd_16x2_ll_ll.i2c_addr = i2c_addr;
+    struct hd44780_ll *ll = calloc(1, sizeof(struct hd44780_ll));
+    if (!ll)
+        return NULL;
+
+    ll->i2c_bus = i2c_bus;
+    ll->i2c_addr = i2c_addr;
 
     // usleep(50000); // Wait > 40 ms after power-on
 
     /* Set 8-bit mode three times (function set) */
-    lcd_16x2_ll_write_nibble(0x30, 0x00);
+    hd44780_ll_write_nibble(ll, 0x30, 0x00);
     usleep(4500);
-    lcd_16x2_ll_write_nibble(0x30, 0x00);
+    hd44780_ll_write_nibble(ll, 0x30, 0x00);
     usleep(150);
-    lcd_16x2_ll_write_nibble(0x30, 0x00);
+    hd44780_ll_write_nibble(ll, 0x30, 0x00);
     usleep(150);
 
     /* Switch to 4-bit mode */
-    lcd_16x2_ll_write_nibble(0x20, 0x00);
+    hd44780_ll_write_nibble(ll, 0x20, 0x00);
     usleep(150);
 
     /* Now we can send full commands in 4-bit mode */
-    lcd_16x2_ll_command(LCD_FUNCTION_SET | LCD_4BIT_MODE | LCD_2LINE | LCD_5x8DOTS);
-    lcd_16x2_ll_command(LCD_DISPLAY_CONTROL | LCD_DISPLAY_ON | LCD_CURSOR_OFF | LCD_BLINK_OFF);
-    lcd_16x2_ll_command(LCD_CLEAR_DISPLAY);
+    hd44780_ll_command(ll, LCD_FUNCTION_SET | LCD_4BIT_MODE | LCD_2LINE | LCD_5x8DOTS);
+    hd44780_ll_command(ll, LCD_DISPLAY_CONTROL | LCD_DISPLAY_ON | LCD_CURSOR_OFF | LCD_BLINK_OFF);
+    hd44780_ll_command(ll, LCD_CLEAR_DISPLAY);
+
+    return ll;
 }
 
 /* Set cursor to line (1 or 2) */
-void lcd_16x2_ll_set_cursor(uint8_t line)
+void hd44780_ll_set_cursor(struct hd44780_ll *self, uint8_t line)
 {
     uint8_t address = (line == 0) ? 0x80 : 0xC0;
-    lcd_16x2_ll_command(address);
+    hd44780_ll_command(self, address);
 }
 
 /* LCD data (character) */
-void lcd_16x2_ll_data(uint8_t data)
+void hd44780_ll_data(struct hd44780_ll *self, uint8_t data)
 {
-    lcd_16x2_ll_write_byte(data, PIN_RS);
+    hd44780_ll_write_byte(self, data, PIN_RS);
 }
 
-/* Clear the lcd_16x2 */
-void lcd_16x2_ll_clear(void)
+/* Clear the hd44780 */
+void hd44780_ll_clear(struct hd44780_ll *self)
 {
-    lcd_16x2_ll_command(LCD_CLEAR_DISPLAY);
-    /* Clearing the lcd_16x2 takes a bit longer */
+    hd44780_ll_command(self, LCD_CLEAR_DISPLAY);
+    /* Clearing the hd44780 takes a bit longer */
     usleep(2000);
 }

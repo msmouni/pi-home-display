@@ -12,8 +12,9 @@
 #include <netinet/in.h>
 
 #include "db.h"
-#include "lcd_16x2.h"
-#include "oled_128x32.h"
+#include "display/display.h"
+#include "display/model.h"
+#include "i2c.h"
 
 #define I2C_BUS "/dev/i2c-1"
 #define DB_FILE "/var/lib/pi-home-sensors_data/data.db"
@@ -106,60 +107,42 @@ int get_ip_address(char *ip, size_t maxlen)
     return -1;
 }
 
-void display_ip()
+void update_model_sensors(const sensors_sample_t *sample, display_model_t *model)
 {
-    char ip[INET_ADDRSTRLEN] = {0};
-
-    if (get_ip_address(ip, sizeof(ip)) == 0)
+    if (sample->bmp280_temperature != -1 && sample->bmp280_pressure != -1)
     {
-        char line[32];
-        snprintf(line, sizeof(line), "IP:%s", ip);
-
-        oled_128x32_draw_string(1, 0, line);
+        model->has_bmp280 = true;
+        model->bmp280_temperature = sample->bmp280_temperature;
+        model->bmp280_pressure = sample->bmp280_pressure;
     }
     else
     {
-        oled_128x32_draw_string(1, 0, "IP: no link");
+        model->has_bmp280 = false;
     }
-}
 
-void print_sensor_data(float bmp280_temp, float bmp280_pressure,
-                       float temperature, float humidity)
-{
-    char info_msg_l1[MAX_PRINT_SIZE] = {0};
-    char info_msg_l2[MAX_PRINT_SIZE] = {0};
-
-    lcd_16x2_clear();
-    oled_128x32_clear_line(2);
-    oled_128x32_clear_line(3);
-
-    snprintf(info_msg_l1, MAX_PRINT_SIZE, "T=%.1fC|P=%dhPa", bmp280_temp, (int)bmp280_pressure);
-    lcd_16x2_print(info_msg_l1, 0);
-    oled_128x32_draw_string(2, 0, info_msg_l1);
-
-    if (temperature != -1 && humidity != -1)
+    if (sample->htu21d_temperature != -1 && sample->htu21d_humidity != -1)
     {
-        snprintf(info_msg_l2, MAX_PRINT_SIZE, "T=%.2fC|H=%d%%", temperature, (int)humidity);
-        lcd_16x2_print(info_msg_l2, 1);
-        oled_128x32_draw_string(3, 0, info_msg_l2);
+        model->has_htu21d = true;
+        model->htu21d_temperature = sample->htu21d_temperature;
+        model->htu21d_humidity = sample->htu21d_humidity;
     }
     else
     {
-        snprintf(info_msg_l2, MAX_PRINT_SIZE, "HTU21D: Invalid data");
-        lcd_16x2_print(info_msg_l2, 1);
-        oled_128x32_draw_string(3, 0, info_msg_l2);
+        model->has_htu21d = false;
     }
 }
 
-void oled_display_time()
+void update_model_ip(display_model_t *model)
 {
-    time_t now = time(NULL);
-    struct tm tm_now;
-    char ts[32];
+    if (get_ip_address(model->ip, sizeof(model->ip)) != 0)
+    {
+        strncpy(model->ip, "no link", sizeof(model->ip));
+    }
+}
 
-    localtime_r(&now, &tm_now);
-    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tm_now);
-    oled_128x32_draw_string(0, 0, ts);
+void update_model_timestamp(display_model_t *model)
+{
+    model->timestamp = time(NULL);
 }
 
 int main(void)
@@ -172,24 +155,32 @@ int main(void)
 
     timer_t t_sensor = make_timer(SENSORS_SIG, sensor_handler, SENSOR_PERIOD_SEC);
     timer_t t_clock = make_timer(CLOCK_SIG, clock_handler, CLOCK_PERIOD_SEC);
-    struct I2cBus *i2c_bus = i2c_init(I2C_BUS);
 
+    struct I2cBus *i2c_bus = i2c_init(I2C_BUS);
     if (!i2c_bus)
     {
         perror("Failed to initialize I2C bus");
         res = -1;
-        goto out;
+        goto err_i2c;
     }
 
-    // OLED
-    oled_128x32_init(i2c_bus);
-    oled_128x32_clear();
-    oled_128x32_draw_string(0, 0, "Hello from OLED!");
+    display_t *display = display_create(DISPLAY_OLED_128x32, i2c_bus);
+    if (!display)
+    {
+        fprintf(stderr, "Failed to create OLED display\n");
+        res = -1;
+        goto err_display_create;
+    }
 
-    lcd_16x2_create(i2c_bus);
-    lcd_16x2_print("   Welcome to   ", 0);
-    lcd_16x2_print("pi-home-sensors", 1);
-    sleep(3);
+    res = display_init(display);
+    if (res != 0)
+    {
+        fprintf(stderr, "Failed to initialize display\n");
+        res = -1;
+        goto err_display_init;
+    }
+
+    display_model_t model = {0};
 
     // Initialize SQLite database
     struct sensors_db *sens_db = sensors_db_open(DB_FILE, SENSORS_DB_CONSUMER, DB_DATA_SIZE);
@@ -211,39 +202,40 @@ int main(void)
             int res = sensors_db_read_latest(sens_db, &latest_sample);
             if (res != 0)
             {
-                oled_128x32_draw_string(2, 0, "No sensor data");
+                /* TODO: handle error message */
                 continue;
             }
 
-            print_sensor_data(latest_sample.bmp280_temperature,
-                              latest_sample.bmp280_pressure,
-                              latest_sample.htu21d_temperature,
-                              latest_sample.htu21d_humidity);
+            update_model_sensors(&latest_sample, &model);
 
-            display_ip();
+            update_model_ip(&model);
         }
 
         if (clock_tick)
         {
             clock_tick = 0;
             // get current time as a string and draw it on the OLED
-            oled_display_time();
+            update_model_timestamp(&model);
+
+            display_update(display, &model);
         }
 
         pause(); // sleep until next signal
     }
 
-out:
+    if (sens_db)
+        sensors_db_close(sens_db);
+
+err_display_create:
+    display_destroy(display);
+
+err_display_init:
+    i2c_close(i2c_bus);
+
+err_i2c:
     // Cleanup before exiting
     timer_delete(t_sensor);
     timer_delete(t_clock);
-
-    lcd_16x2_clear();
-    oled_128x32_clear();
-
-    sensors_db_close(sens_db);
-
-    i2c_close(i2c_bus);
 
     return res;
 }
