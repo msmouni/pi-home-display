@@ -1,20 +1,20 @@
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <signal.h>
-#include <time.h>
-#include <fcntl.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <string.h>
-#include <ifaddrs.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "db.h"
 #include "display/display.h"
-#include "display/model.h"
 #include "i2c.h"
+#include "model.h"
 
 #define I2C_BUS "/dev/i2c-1"
 #define DB_FILE "/var/lib/pi-home-sensors_data/data.db"
@@ -77,20 +77,17 @@ int get_ip_address(char *ip, size_t maxlen)
     struct ifaddrs *ifaddr, *ifa;
 
     // Get all network interfaces
-    if (getifaddrs(&ifaddr) == -1)
-    {
+    if (getifaddrs(&ifaddr) == -1) {
         perror("getifaddrs");
         return -1;
     }
 
-    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
-    {
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
         if (!ifa->ifa_addr)
             continue;
 
         // IPv4
-        if (ifa->ifa_addr->sa_family == AF_INET)
-        {
+        if (ifa->ifa_addr->sa_family == AF_INET) {
             struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
 
             // Skip loopback
@@ -109,41 +106,31 @@ int get_ip_address(char *ip, size_t maxlen)
 
 void update_model_sensors(const sensors_sample_t *sample, display_model_t *model)
 {
-    if (sample->bmp280_temperature != -1 && sample->bmp280_pressure != -1)
-    {
+    if (sample->bmp280_temperature != -1 && sample->bmp280_pressure != -1) {
         model->has_bmp280 = true;
         model->bmp280_temperature = sample->bmp280_temperature;
         model->bmp280_pressure = sample->bmp280_pressure;
-    }
-    else
-    {
+    } else {
         model->has_bmp280 = false;
     }
 
-    if (sample->htu21d_temperature != -1 && sample->htu21d_humidity != -1)
-    {
+    if (sample->htu21d_temperature != -1 && sample->htu21d_humidity != -1) {
         model->has_htu21d = true;
         model->htu21d_temperature = sample->htu21d_temperature;
         model->htu21d_humidity = sample->htu21d_humidity;
-    }
-    else
-    {
+    } else {
         model->has_htu21d = false;
     }
 }
 
 void update_model_ip(display_model_t *model)
 {
-    if (get_ip_address(model->ip, sizeof(model->ip)) != 0)
-    {
+    if (get_ip_address(model->ip, sizeof(model->ip)) != 0) {
         strncpy(model->ip, "no link", sizeof(model->ip));
     }
 }
 
-void update_model_timestamp(display_model_t *model)
-{
-    model->timestamp = time(NULL);
-}
+void update_model_timestamp(display_model_t *model) { model->timestamp = time(NULL); }
 
 int main(void)
 {
@@ -156,25 +143,16 @@ int main(void)
     timer_t t_sensor = make_timer(SENSORS_SIG, sensor_handler, SENSOR_PERIOD_SEC);
     timer_t t_clock = make_timer(CLOCK_SIG, clock_handler, CLOCK_PERIOD_SEC);
 
-    struct I2cBus *i2c_bus = i2c_init(I2C_BUS);
-    if (!i2c_bus)
-    {
-        perror("Failed to initialize I2C bus");
-        res = -1;
-        goto err_i2c;
-    }
-
-    display_t *display = display_create(DISPLAY_OLED_128x32, i2c_bus);
-    if (!display)
-    {
-        fprintf(stderr, "Failed to create OLED display\n");
+    /* TODO: parse config file */
+    display_t *display = display_create(DISPLAY_LAFVIN, "/tmp/lafvin_display.sock");
+    if (!display) {
+        fprintf(stderr, "Failed to create LAFVIN display\n");
         res = -1;
         goto err_display_create;
     }
 
     res = display_init(display);
-    if (res != 0)
-    {
+    if (res != 0) {
         fprintf(stderr, "Failed to initialize display\n");
         res = -1;
         goto err_display_init;
@@ -184,8 +162,7 @@ int main(void)
 
     // Initialize SQLite database
     struct sensors_db *sens_db = sensors_db_open(DB_FILE, SENSORS_DB_CONSUMER, DB_DATA_SIZE);
-    if (!sens_db)
-    {
+    if (!sens_db) {
         fprintf(stderr, "Failed to open database\n");
         keep_running = 0;
     }
@@ -193,15 +170,12 @@ int main(void)
     sensors_sample_t latest_sample;
 
     // Main measurement loop
-    while (keep_running)
-    {
-        if (sensor_tick)
-        {
+    while (keep_running) {
+        if (sensor_tick) {
             sensor_tick = 0;
 
             int res = sensors_db_read_latest(sens_db, &latest_sample);
-            if (res != 0)
-            {
+            if (res != 0) {
                 /* TODO: handle error message */
                 continue;
             }
@@ -211,8 +185,7 @@ int main(void)
             update_model_ip(&model);
         }
 
-        if (clock_tick)
-        {
+        if (clock_tick) {
             clock_tick = 0;
             // get current time as a string and draw it on the OLED
             update_model_timestamp(&model);
@@ -230,8 +203,6 @@ err_display_create:
     display_destroy(display);
 
 err_display_init:
-    i2c_close(i2c_bus);
-
 err_i2c:
     // Cleanup before exiting
     timer_delete(t_sensor);
