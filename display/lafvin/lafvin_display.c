@@ -12,20 +12,23 @@ struct lafvin_ctx {
     int consumer_fd;
 
     char socket_path[128];
-    char json[256];
+    char json[DISPLAY_MODEL_JSON_SIZE];
 };
 
 static int lafvin_display_init(void *ctx)
 {
-    if (!ctx)
+    printf("Initializing Lafvin display...\n");
+    if (!ctx) {
+        printf("Invalid context for Lafvin display\n");
         return -1;
+    }
 
     struct lafvin_ctx *lafvin = ctx;
 
     /* Create UNIX domain socket */
     lafvin->server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (lafvin->server_fd < 0) {
-        perror("socket");
+        fprintf(stderr, "Error creating socket");
         return -1;
     }
 
@@ -37,13 +40,13 @@ static int lafvin_display_init(void *ctx)
     unlink(lafvin->socket_path); // Remove existing socket file
 
     if (bind(lafvin->server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("bind");
+        fprintf(stderr, "Error binding socket");
         close(lafvin->server_fd);
         return -1;
     }
 
     if (listen(lafvin->server_fd, 5) < 0) {
-        perror("listen");
+        fprintf(stderr, "Error listening on socket");
         close(lafvin->server_fd);
         return -1;
     }
@@ -69,6 +72,7 @@ static void lafvin_display_update(void *ctx, const display_model_t *model)
     struct lafvin_ctx *lafvin = ctx;
 
     display_model_to_json(model, lafvin->json, sizeof(lafvin->json));
+
     send(lafvin->consumer_fd, lafvin->json, strlen(lafvin->json), 0);
 }
 
@@ -86,8 +90,17 @@ static void lafvin_display_destroy(void *ctx)
     free(lafvin);
 }
 
+display_ops_t g_ops = {
+    .init = lafvin_display_init,
+    .clear = lafvin_display_clear,
+    .update = lafvin_display_update,
+    .destroy = lafvin_display_destroy,
+};
+
 display_t *lafvin_display_create(char *socket_path)
 {
+    printf("Creating Lafvin display with socket path: %s\n", socket_path);
+
     display_t *disp = malloc(sizeof(display_t));
     if (!disp)
         return NULL;
@@ -102,12 +115,9 @@ display_t *lafvin_display_create(char *socket_path)
 
     disp->type = DISPLAY_LAFVIN;
     disp->ctx = ctx;
-    disp->ops = &(display_ops_t){
-        .init = lafvin_display_init,
-        .clear = lafvin_display_clear,
-        .update = lafvin_display_update,
-        .destroy = lafvin_display_destroy,
-    };
+    disp->ops = &g_ops;
+
+    printf("Lafvin display created successfully\n");
 
     return disp;
 }

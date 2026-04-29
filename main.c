@@ -104,6 +104,164 @@ int get_ip_address(char *ip, size_t maxlen)
     return -1;
 }
 
+int get_wifi_info(bool *connected, char *ssid, size_t ssid_len)
+{
+    FILE *fp;
+
+    *connected = false;
+    snprintf(ssid, ssid_len, "unknown");
+
+    // Check if wlan0 is up
+    fp = fopen("/sys/class/net/wlan0/operstate", "r");
+    if (!fp)
+        return -1;
+
+    char state[16] = {0};
+    fgets(state, sizeof(state), fp);
+    fclose(fp);
+
+    if (strncmp(state, "up", 2) != 0)
+        return 0;
+
+    *connected = true;
+
+    // Try to get SSID (requires iw)
+    fp = popen("iw dev wlan0 link 2>/dev/null", "r");
+    if (!fp)
+        return 0;
+
+    char line[128];
+    while (fgets(line, sizeof(line), fp)) {
+        char *s = strstr(line, "SSID:");
+        if (s) {
+            s += 5; // Move past "SSID:"
+            while (*s == ' ')
+                s++;
+
+            strncpy(ssid, s, ssid_len - 1);
+            ssid[ssid_len - 1] = '\0';
+
+            // remove newline
+            ssid[strcspn(ssid, "\n")] = '\0';
+            break;
+        }
+    }
+
+    pclose(fp);
+    return 0;
+}
+
+int get_cpu_temp(void)
+{
+    FILE *fp = fopen("/sys/class/thermal/thermal_zone0/temp", "r");
+    if (!fp)
+        return -1;
+
+    int temp;
+    fscanf(fp, "%d", &temp);
+    fclose(fp);
+
+    return temp / 1000; // convert milli°C to °C
+}
+
+int get_cpu_load(void)
+{
+    /* https://www.man7.org/linux/man-pages/man5/proc_loadavg.5.html */
+    FILE *fp = fopen("/proc/loadavg", "r");
+    if (!fp)
+        return -1;
+
+    float load;
+    fscanf(fp, "%f", &load);
+    fclose(fp);
+
+    return (int)(load * 100); // rough %
+}
+
+int get_ram_usage(long *ram_total, int *ram_usage_pr)
+{
+    FILE *fp = fopen("/proc/meminfo", "r");
+    if (!fp)
+        return -1;
+
+    long total = 0;
+    long available = 0;
+
+    char key[64];
+    long value;
+    char unit[16];
+
+    while (fscanf(fp, "%63s %ld %15s\n", key, &value, unit) == 3) {
+        if (strcmp(key, "MemTotal:") == 0)
+            total = value;
+        else if (strcmp(key, "MemAvailable:") == 0)
+            available = value;
+
+        if (total && available)
+            break;
+    }
+
+    fclose(fp);
+
+    if (total == 0)
+        return -1;
+
+    *ram_total = total / 1024; // convert kB to MB
+
+    long used = total - available;
+    *ram_usage_pr = (int)((used * 100) / total); // percentage
+
+    return 0;
+}
+
+int get_uptime(long *uptime)
+{
+    FILE *fp = fopen("/proc/uptime", "r");
+    if (!fp)
+        return -1;
+
+    double uptime_seconds = 0.0;
+
+    if (fscanf(fp, "%lf", &uptime_seconds) != 1) {
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+
+    *uptime = (long)uptime_seconds;
+    return 0;
+}
+
+/* TODO: move to model module */
+void update_model_system_info(display_model_t *model)
+{
+    if (!model)
+        return;
+
+    // IP
+    if (get_ip_address(model->ip, sizeof(model->ip)) != 0) {
+        strncpy(model->ip, "no link", sizeof(model->ip));
+    }
+
+    // WiFi
+    get_wifi_info(&model->wifi_connected, model->wifi_ssid, sizeof(model->wifi_ssid));
+
+    // CPU temp
+    model->cpu_temp = get_cpu_temp();
+
+    // CPU load
+    model->cpu_load = get_cpu_load();
+
+    // RAM usage
+    get_ram_usage(&model->ram_total, &model->ram_usage_pr);
+
+    // Uptime
+    get_uptime(&model->uptime);
+}
+
+void update_model_timestamp(display_model_t *model) { model->timestamp = time(NULL); }
+
 void update_model_sensors(const sensors_sample_t *sample, display_model_t *model)
 {
     if (sample->bmp280_temperature != -1 && sample->bmp280_pressure != -1) {
@@ -175,14 +333,13 @@ int main(void)
             sensor_tick = 0;
 
             int res = sensors_db_read_latest(sens_db, &latest_sample);
-            if (res != 0) {
-                /* TODO: handle error message */
-                continue;
+            if (!res) {
+                update_model_sensors(&latest_sample, &model);
+            } else {
+                fprintf(stderr, "Failed to read latest sensor data from database\n");
             }
 
-            update_model_sensors(&latest_sample, &model);
-
-            update_model_ip(&model);
+            update_model_system_info(&model);
         }
 
         if (clock_tick) {
@@ -203,7 +360,6 @@ err_display_create:
     display_destroy(display);
 
 err_display_init:
-err_i2c:
     // Cleanup before exiting
     timer_delete(t_sensor);
     timer_delete(t_clock);
