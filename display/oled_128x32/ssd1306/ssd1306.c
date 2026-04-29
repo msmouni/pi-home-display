@@ -1,11 +1,11 @@
 #include "ssd1306.h"
-#include <unistd.h>
-#include <sys/ioctl.h>
+#include "display/oled_128x32/fonts/5x8_vertikal_LSB_1.h"
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "display/oled_128x32/fonts/5x8_vertikal_LSB_1.h"
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 #define SSD1306_I2C_ADDR 0x3C
 #define SSD1306_WIDTH 128
@@ -19,8 +19,7 @@
 #define SSD1306_I2C_CMD 0x00
 #define SSD1306_I2C_DATA 0x40
 
-struct ssd1306
-{
+struct ssd1306 {
     struct I2cBus *i2c;
 };
 
@@ -93,8 +92,7 @@ int ssd1306_init(struct ssd1306 *self)
 
 void ssd1306_clear(struct ssd1306 *self)
 {
-    for (uint8_t page = 0; page < 4; page++)
-    {
+    for (uint8_t page = 0; page < 4; page++) {
         ssd1306_set_cursor(self, page, 0);
         for (int i = 0; i < 128; i++)
             ssd1306_send_data(self, 0x00);
@@ -132,8 +130,7 @@ void ssd1306_draw_line(struct ssd1306 *self, uint8_t page, const char *str)
 
     int str_len = strlen(str);
 
-    for (int i = 0; i < SSD1306_CHARS_PER_LINE; i++)
-    {
+    for (int i = 0; i < SSD1306_CHARS_PER_LINE; i++) {
         if (i < str_len)
             ssd1306_draw_char(self, str[i]);
         else
@@ -148,7 +145,4 @@ void ssd1306_clear_line(struct ssd1306 *self, uint8_t page)
         ssd1306_send_data(self, 0x00);
 }
 
-void ssd1306_destroy(struct ssd1306 *self)
-{
-    free(self);
-}
+void ssd1306_destroy(struct ssd1306 *self) { free(self); }

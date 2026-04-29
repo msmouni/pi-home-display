@@ -7,6 +7,7 @@
 typedef enum display_type {
     DISPLAY_OLED_128x32,
     DISPLAY_LCD_16x2,
+    DISPLAY_LAFVIN,
 } display_type_t;
 
 typedef struct display_ops {

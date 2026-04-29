@@ -1,4 +1,5 @@
 #include "display.h"
+#include "lafvin/lafvin_display.h"
 #include "lcd_16x2/lcd_16x2_display.h"
 #include "model.h"
 #include "oled_128x32/oled_display.h"
@@ -9,12 +10,19 @@ display_t *display_create(display_type_t type, void *cfg)
     display_t *disp;
 
     switch (type) {
-    case DISPLAY_OLED_128x32:
+    case DISPLAY_OLED_128x32: {
         disp = oled_128x32_create((struct I2cBus *)cfg);
         break;
-    case DISPLAY_LCD_16x2:
+    }
+    case DISPLAY_LCD_16x2: {
         disp = lcd_16x2_create((struct I2cBus *)cfg);
         break;
+    }
+    case DISPLAY_LAFVIN: {
+        disp = lafvin_display_create((char *)cfg);
+        break;
+    }
+
     default:
         return NULL;
     }

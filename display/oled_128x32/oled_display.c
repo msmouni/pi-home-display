@@ -1,9 +1,8 @@
-#include <stdlib.h>
 #include "oled_display.h"
 #include "ssd1306.h"
+#include <stdlib.h>
 
-struct oled_ctx
-{
+struct oled_ctx {
     struct ssd1306 *dev;
 
     char line_1[MAX_PRINT_SIZE];
@@ -53,14 +52,13 @@ static void oled_update(void *ctx, const display_model_t *model)
     snprintf(oled->line_2, sizeof(oled->line_2), "IP:%s", model->ip);
 
     /* Sensor Data */
-    snprintf(oled->line_3, sizeof(oled->line_3), "T=%.1fC|P=%dhPa", model->bmp280_temperature, (int)model->bmp280_pressure);
+    snprintf(oled->line_3, sizeof(oled->line_3), "T=%.1fC|P=%dhPa", model->bmp280_temperature,
+             (int)model->bmp280_pressure);
 
-    if (model->htu21d_temperature != -1 && model->htu21d_humidity != -1)
-    {
-        snprintf(oled->line_4, sizeof(oled->line_4), "T=%.2fC|H=%d%%", model->htu21d_temperature, (int)model->htu21d_humidity);
-    }
-    else
-    {
+    if (model->htu21d_temperature != -1 && model->htu21d_humidity != -1) {
+        snprintf(oled->line_4, sizeof(oled->line_4), "T=%.2fC|H=%d%%", model->htu21d_temperature,
+                 (int)model->htu21d_humidity);
+    } else {
         snprintf(oled->line_4, sizeof(oled->line_4), "HTU21D: Invalid data");
     }
 
@@ -95,8 +93,7 @@ display_t *oled_128x32_create(struct I2cBus *bus)
         return NULL;
 
     struct oled_ctx *ctx = malloc(sizeof(struct oled_ctx));
-    if (!ctx)
-    {
+    if (!ctx) {
         free(disp);
         return NULL;
     }

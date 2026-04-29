@@ -3,9 +3,9 @@
 
 /* C driver for the SSD1306 0.91" OLED (128×32) over I²C */
 
-#include <stdint.h>
-#include <stdbool.h>
 #include "i2c.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 struct ssd1306;
 
